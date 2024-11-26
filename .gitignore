@@ -1,0 +1,7 @@
+results/
+*.swp
+.scope
+nohup.out
+scope
+results/*
+*.swo
