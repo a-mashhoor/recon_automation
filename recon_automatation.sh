@@ -69,24 +69,24 @@ elif ! grep -q . .scope; then
     if ! user_agr "$yn"; then exit 1; fi 
 else
     echo -e "\n.scope file found. cheking it validation";
-    fi    
+fi    
 
-    sleep 1
-    if [[ ! -f ./.scope ]]; then
-        echo -e "\nsomething went worng file does not exist! or it contains nothing"  > /dev/stderr
-        exit 1
-    elif ! grep -q . ./.scope ; then
-        echo -e "\n.scope file is empty exiting the script" > /dev/stderr
-        exit 1
+sleep 1
+if [[ ! -f ./.scope ]]; then
+    echo -e "\nsomething went worng file does not exist! or it contains nothing"  > /dev/stderr
+    exit 1
+elif ! grep -q . ./.scope ; then
+    echo -e "\n.scope file is empty exiting the script" > /dev/stderr
+    exit 1
+else
+    if grep -q -Eo "^(https|http|\.|\*|\.|\^)[a-zA-Z0-9./*?=_%:-].*(.\$)" .scope || grep -q -Eo "([a-zA-Z]*\..*){1,}$" .scope ; then 
+        echo -e "\n.scope file contains valid like url preciding...\n scope file contains:\n"
+        echo -e "\033[0;33m$(cat .scope)\033[1;32m\n" 
     else
-        if grep -q -Eo "^(https|http|\.|\*|\.|\^)[a-zA-Z0-9./*?=_%:-].*(.\$)" .scope || grep -q -Eo "([a-zA-Z]*\..*){1,}$" .scope ; then 
-            echo -e "\n.scope file contains valid like url preciding...\n scope file contains:\n"
-            echo -e "\033[0;33m$(cat .scope)\033[1;32m\n" 
-        else
-            echo -e "\n\033[1;33m.scope file does not contain valid like url exiting\033[1;32m" > /dev/stderr
-            exit 1
-        fi
-    fi  
+        echo -e "\n\033[1;33m.scope file does not contain valid like url exiting\033[1;32m" > /dev/stderr
+        exit 1
+    fi
+fi  
 
 #parent result directory !
 mkdir -p results
@@ -144,7 +144,7 @@ if [[ "$3" == "--deep" ]]; then
 
         echo "ffuf subdomains brt is running approximelty 6-7 minute duration"
 
-        set +m; { ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u https://FUZZ.booking.ir -o results/subs.json -of json -noninteractive & } &>/dev/null 
+        set +m; { ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u https://FUZZ."$domain"/ -o results/subs.json -of json -noninteractive & } &>/dev/null 
         duration_counter "ffuf"
 
         cat results/subs.json| jq -s '.[].results'| jq -r '.[].host'| sort -u -V > results/ffuf_subs_result
@@ -270,7 +270,7 @@ sleep 1
 echo "running gobuseter in background both for lower case and upper case directory enum"
 if [[ ! -f ./results/dirs_small ]]; then
     set +m; { 
-    gobuster dir -u https://booking.ir \
+    gobuster dir -u https://"$domain" \
         -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-small.txt \
         --timeout 5s  -t 50 -r -o results/dirs_small & 
     } &>/dev/null        
@@ -281,7 +281,7 @@ fi
 sleep 2 
 if [[ ! -f ./results/dirs_lower_small ]]; then
     set +m; { 
-    gobuster dir -u https://booking.ir\
+    gobuster dir -u https://"$domain" \
         -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-small.txt\
         --timeout 5s  -t 50 -r -o results/dirs_lower_small &
     } &>/dev/null 
@@ -306,8 +306,8 @@ if [[ ! -f results/subzy_out ]]; then
     fi
 else
     echo "subzy results exist"
-    fi
+fi
 
-    end_of_script
-    secs=$SECONDS
-    echo $(printf '\nthe whole script took %dh:%dm:%ds to finish\n' $((secs/3600)) $((secs%3600/60)) $((secs%60)))
+end_of_script
+secs=$SECONDS
+echo $(printf '\nthe whole script took %dh:%dm:%ds to finish\n' $((secs/3600)) $((secs%3600/60)) $((secs%60)))
