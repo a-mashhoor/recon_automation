@@ -151,7 +151,7 @@ if [[ "$3" == "--deep" ]]; then
         cat results/subs.json| jq -s '.[].results'| jq -r '.[] | [.host, .url, .redirectlocation, .status ] | @csv'| \
             sed -e '1s/^/subdomain,url,redirect_location,status\n/g' > results/csv_ffuf_result;
 
-        cat results/subs results/ffuf_subs_result | sort -u -V > results/subs && 
+        cat results/subs results/ffuf_subs_result | sort -u -V >> results/subs && 
             rm results/ffuf_subs_result results/subs.json 
 
     else 
