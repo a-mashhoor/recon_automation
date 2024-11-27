@@ -7,8 +7,9 @@
 # github https://github.com/l0uiew/recon_automation.git 
 
 
-# importing functions! acctualy source them! :)
+# importing functions! acctualy source them! 
 source ./funcs.sh  
+
 echo -e "\n\n\033[1;36m$(figlet -c -w 150  -t "The Recon Automation")"
 echo -e "\033[1;37mAuthor: l0uiew\ngithub -->> https://github.com/l0uiew/recon_automation.git\033[1;32m\n\n"
 
@@ -68,24 +69,24 @@ elif ! grep -q . .scope; then
     if ! user_agr "$yn"; then exit 1; fi 
 else
     echo -e "\n.scope file found. cheking it validation";
-    fi    
+fi    
 
-    sleep 1
-    if [[ ! -f ./.scope ]]; then
-        echo -e "\nsomething went worng file does not exist! or it contains nothing"  > /dev/stderr
-        exit 1
-    elif ! grep -q . ./.scope ; then
-        echo -e "\n.scope file is empty exiting the script" > /dev/stderr
-        exit 1
+sleep 1
+if [[ ! -f ./.scope ]]; then
+    echo -e "\nsomething went worng file does not exist! or it contains nothing"  > /dev/stderr
+    exit 1
+elif ! grep -q . ./.scope ; then
+    echo -e "\n.scope file is empty exiting the script" > /dev/stderr
+    exit 1
+else
+    if grep -q -Eo "^(https|http|\.|\*|\.|\^)[a-zA-Z0-9./*?=_%:-].*(.\$)" .scope || grep -q -Eo "([a-zA-Z]*\..*){1,}$" .scope ; then 
+        echo -e "\n.scope file contains valid like url preciding...\n scope file contains:\n"
+        echo -e "\033[0;33m$(cat .scope)\033[1;32m\n" 
     else
-        if grep -q -Eo "^(https|http|\.|\*|\.|\^)[a-zA-Z0-9./*?=_%:-].*(.\$)" .scope || grep -q -Eo "([a-zA-Z]*\..*){1,}$" .scope ; then 
-            echo -e "\n.scope file contains valid like url preciding...\n scope file contains:\n"
-            echo -e "\033[0;33m$(cat .scope)\033[1;32m\n" 
-        else
-            echo -e "\n\033[1;33m.scope file does not contain valid like url exiting\033[1;32m" > /dev/stderr
-            exit 1
-        fi
-    fi  
+        echo -e "\n\033[1;33m.scope file does not contain valid like url exiting\033[1;32m" > /dev/stderr
+        exit 1
+    fi
+fi  
 
 #parent result directory !
 mkdir -p results
@@ -305,8 +306,8 @@ if [[ ! -f results/subzy_out ]]; then
     fi
 else
     echo "subzy results exist"
-    fi
+fi
 
-    end_of_script
-    secs=$SECONDS
-    echo $(printf '\nthe whole script took %dh:%dm:%ds to finish\n' $((secs/3600)) $((secs%3600/60)) $((secs%60)))
+end_of_script
+secs=$SECONDS
+echo $(printf '\nthe whole script took %dh:%dm:%ds to finish\n' $((secs/3600)) $((secs%3600/60)) $((secs%60)))
