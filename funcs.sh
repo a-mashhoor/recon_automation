@@ -45,7 +45,7 @@ duration_counter () {
     name=$1
     while pgrep -u "$USER" "$name" > /dev/null ; do
         echo -ne "\r\033[0k\033[1;31m"$name" is ruuning! --> $(ps -eo pid,etime | grep "$(pgrep "$name")" | awk '{print $2}') <-- Duration";
-        usleep 1070000
+        usleep 1080000
     done
     echo -e "\n\033[1;32m"
 }
