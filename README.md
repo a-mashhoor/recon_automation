@@ -39,7 +39,7 @@ I originally wrote this script for my personal use, but I thought others might e
 
 Just clone the script.
 ```
-git clone https://github.com/l0uiew/recon_automation.git 
+git clone https://github.com/a-mashhoor/recon_automation.git 
 ```
 go to the `recon_automation` directory and run `sudo chmod a+x ./init.sh ./recon_automation` for granting execution permission 
 
