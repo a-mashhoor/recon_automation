@@ -5,3 +5,5 @@ nohup.out
 scope
 results/*
 *.swo
+
+.tmp/
