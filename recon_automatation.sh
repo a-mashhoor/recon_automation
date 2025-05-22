@@ -1,7 +1,17 @@
 #!/usr/bin/env zsh
 
+#
+#
 # Author Arshia Mashhoor (l0uiew)
 # github https://github.com/a-mashhoor/recon_automation.git
+
+# Comments? one or two not in the mood for them for my freaking personal automation script
+# use it as it is or leave not, not my problem I'm not your god damn babysiter ! by the way
+# don't be an ahole use this shit responsivly on the freaking scope where the hell you are allowed
+# to do enum or fuzzing  etcetra etcetra
+#
+#
+#
 
 emulate -LR zsh
 setopt extendedglob
@@ -11,6 +21,15 @@ unsetopt xtrace
 
 source ./funcs.sh
 
+
+SUBS_TEMP=$(mktemp -p /tmp )
+WAYBACK_TEMP=$(mktemp -p /tmp )
+IPs_TEMP=$(mktemp -p /tmp )
+DMAP_TEMP=$(mktemp -p /tmp )
+
+declare -g SUBS_COUNT=0
+declare -g L_SUBS_COUNT=0
+
 function main(){
   _init_terminal
   parse_args "$@"
@@ -18,18 +37,29 @@ function main(){
   echo "${COLORS[BLUE]}Target domain: $domain${COLORS[RESET]}"
   _online
   echo -e "${COLORS[GREEN]}Starting the Recon...${COLORS[RESET]}"
-
   mkdir -p results
-  check_ssl
+  if ! check_ssl "$domain"; then
+    exit 0
+  fi
+
   waf_det
   sub_g
+  #sub_take subzy problem (i'll replace it with my own tool soon enough)
   headers
+  wayback
+  crawling
+  enum
+  dns_e
+  basic_nmap
+  who_is
+  dir_brut
+  rm -rf SUBS_TEMP WAYBACK_TEMP IPs_TEMP DMAP_TEMP
   end_of_script
   echo -e "${COLORS[GREEN]}The whole script took $(_format_time "$SECONDS") to finish${COLORS[RESET]}"
 }
 
+
 function parse_args(){
-  # Define options
   zmodload zsh/zutil
 
   local -A opts
@@ -48,7 +78,7 @@ function parse_args(){
 
   domain="${opts[-d]:-${opts[--domain]}}"
   if [[ -z "$domain" ]]; then
-    print -P "${COLORS[RED]}Error: Domain argument is required${COLORS[RESET]}" >&2
+    print -P "${COLORS[RED]}err: Domain argument is required${COLORS[RESET]}" >&2
     usage
     exit 1
   fi
@@ -57,14 +87,17 @@ function parse_args(){
     exit 1
   fi
 
-  typeset -g use_scope=1
+  typeset -g use_scope=0
   if (( ${+opts[-scope]} )) || (( ${+opts[--scope]} )); then
     scope_file=${opts[--scope]:-${opts[-scope]}}
     if ! validate_scope_file "$scope_file"; then
       exit 1
     fi
     use_scope=1
+  else
+    print -P "${COLORS[RED]}war: Not using scope${COLORS[RESET]}" >&2
   fi
+
 
   if (( ${+opts[--deep]} )); then
     deep_scan=1
@@ -72,10 +105,11 @@ function parse_args(){
 
 }
 
+
 function _online(){
   # am I online?
   if ! check_internet; then
-    echo "${COLORS[RED]}ERROR: Internet connection failed${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: Internet connection failed${COLORS[RESET]}" >&2
     echo "Network diagnostics:" >&2
     echo "  - Active interface: ${active_interface:-None}" >&2
     echo "  - Local IP: ${local_ip:-Not assigned}" >&2
@@ -105,19 +139,6 @@ function _online(){
   fi
 }
 
-main "${@}"
-
-
-
-
-
-# Check SSL certificate
-#if ! openssl s_client -connect "$domain:443" -quiet -verify_quiet -brief -no_ign_eof &>/dev/null; then
-#  read -t 10 -qs "yn?The certification of target might not be valid - are you sure you want to proceed? [y/N]"
-#  if ! user_agr "$yn"; then {rm -rf results; exit 1}; fi
-#fi
-
-
 
 function waf_det(){
   echo -e "${COLORS[BLUE]}Checking for WAF...${COLORS[RESET]}\n"
@@ -132,55 +153,51 @@ function waf_det(){
 }
 
 function sub_g(){
+
   echo -e "${COLORS[BLUE]}Gathering subdomains from crt.sh, merklemap.com, assetfinder, subfinder and dnsmap with built-in wordlist${COLORS[RESET]}\n"
   if [[ ! -f ./results/subs ]]; then
+    echo -e "${COLORS[CYAN]}Gathering subdomains using subfinder${COLORS[RESET]}"
+    set +m; { subfinder -all -d "$domain" -silent -o SUBS_TEMP & } &>/dev/null
+    duration_counter "subfinder"
+
+    echo -e "${COLORS[CYAN]}Gathering subdomains using assetfinder${COLORS[RESET]}"
+    set +m; { assetfinder --subs-only "$domain" | sed -e 's/^\*\.//g' >> SUBS_TEMP & } 2>/dev/null
+    duration_counter assetfinder
+
+    echo -e "${COLORS[CYAN]}Gathering subdomains using dnsmap with built-in wordlist${COLORS[RESET]}"
+    set +m; { dnsmap "$domain" -d 5 > DMAP_TEMP & } &>/dev/null
+    duration_counter "dnsmap"
+    grep -oP '(\d{1,3}\.){3}\d{1,3}' DMAP_TEMP >> IPs_TEMP
+    grep -vP '(\d{1,3}\.){3}\d{1,3}' DMAP_TEMP | grep -v "+" | grep -ve "^dnsmap" >> SUBS_TEMP
+
+
     echo -e "${COLORS[CYAN]}Gathering subdomains from crt.sh${COLORS[RESET]}"
-    curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u -V >results/crt_domains.txt
+    curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed -e 's/\*\.//g' >> SUBS_TEMP
 
     echo -e "${COLORS[CYAN]}Gathering subdomains from merklemap.com${COLORS[RESET]}"
     curl -s "https://api.merklemap.com/search?query=*.$domain&page=0&output=json" -X GET |
-      jq -s '.[].results | .[].domain' | sed -e 's/[\*\"]//g' | sed -e 's/^\.//g' | sort -u -V >>results/crt_domains.txt
+      jq -s '.[].results | .[].domain' | sed -e 's/[\*\"]//g' | sed -e 's/^\.//g' >> SUBS_TEMP
 
-    echo -e "${COLORS[CYAN]}Gathering subdomains using assetfinder${COLORS[RESET]}"
-    set +m; { assetfinder --subs-only "$domain" >results/subs1 & } 2>/dev/null
-    duration_counter assetfinder
-
-    sed -i -e 's/^\*\.//g' results/subs1
-    sort -u -V results/subs1 >results/subs1.tmp && mv results/subs1.tmp results/subs1
-
-    echo -e "${COLORS[CYAN]}Gathering subdomains using subfinder${COLORS[RESET]}"
-    set +m; { subfinder -all -d "$domain" -silent -o results/subs2 & } &>/dev/null
-    duration_counter "subfinder"
-
-    echo -e "${COLORS[CYAN]}Gathering subdomains using dnsmap with built-in wordlist${COLORS[RESET]}"
-    set +m; { dnsmap "$domain" -r results/dnsmap_results & } &>/dev/null
-    duration_counter "dnsmap"
-
-    # Clean and merge subdomain results
-    grep -Eo "([a-zA-Z]*\..*){1,}$" results/dnsmap_results | sed -e '/^IP /d' >results/dnsmap
-    sort -u -V results/crt_domains.txt results/subs1 results/subs2 results/dnsmap >results/subs &&
-      rm -f results/subs2 results/subs1 results/crt_domains.txt results/dnsmap results/dnsmap_results
-
+    sort -u -V SUBS_TEMP > results/subs
   else
     echo -e "${COLORS[YELLOW]}Subdomains file already exists${COLORS[RESET]}"
   fi
 
-  # Deep subdomain brute force if requested
   if (( deep_scan )); then
     echo "${COLORS[BLUE]}Performing deep scan (subdomain brute force)${COLORS[RESET]}"
 
     if [[ ! -f ./results/csv_ffuf_result ]]; then
       echo "${COLORS[CYAN]}ffuf subdomains brute force is running (approximately 6-7 minutes duration)${COLORS[RESET]}"
 
-      set +m; { ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u "https://FUZZ.$domain/" -o results/subs.json -of json -noninteractive & } &>/dev/null
+      set +m; { ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -u "https://FUZZ.$domain" -o results/subs.json -of json -noninteractive & } &>/dev/null
       duration_counter "ffuf"
 
-      jq -r '.results[].host' results/subs.json | sort -u -V >results/ffuf_subs_result
+      jq -r '.results[].host' results/subs.json | sort -u -V >> SUBS_TEMP
       jq -r '.results[] | [.host, .url, .redirectlocation, .status] | @csv' results/subs.json |
-        sed -e '1s/^/subdomain,url,redirect_location,status\n/' >results/csv_ffuf_result
+        sed -e '1s/^/subdomain,url,redirect_location,status\n/' > results/csv_ffuf_result
 
-      sort -u -V results/subs results/ffuf_subs_result >results/subs.tmp && mv results/subs.tmp results/subs
-      rm -f results/ffuf_subs_result results/subs.json
+      SUBS_TEMP >> results/subs
+      rm -f results/subs.json
 
     else
       echo "${COLORS[YELLOW]}Result for deep subdomain gathering already exists${COLORS[RESET]}"
@@ -189,21 +206,44 @@ function sub_g(){
     echo "${COLORS[BLUE]}Not running deep subdomain gathering${COLORS[RESET]}"
   fi
 
-  (( use_scope )) && $(sort -u -V results/subs | inscope >results/inscope_subs) || $(sort -u -V results/subs > results/inscope_subs)
+  (( use_scope )) && $(sort -u -V results/subs | inscope > results/inscope_subs) || $(sort -u -V results/subs > results/inscope_subs)
 
   if [[ ! -f results/alive_subs ]]; then
-    echo "${COLORS[CYAN]}Checking for alive subdomains using httprobe${COLORS[RESET]}"
-    httprobe -prefer-https <results/inscope_subs >results/alive_subs
+    echo "${COLORS[CYAN]}Checking for alive subdomains using httprobe${COLORS[RESET]}";
+    cat results/inscope_subs | httprobe -prefer-https > results/alive_subs
   else
     echo "${COLORS[YELLOW]}Alive subdomains already gathered${COLORS[RESET]}"
   fi
+  L_SUBS_COUNT=$(l_counter results/alive_subs)
+  SUBS_COUNT=$(l_counter results/inscope_subs)
+  echo "${COLORS[GREEN]}FOUND total ${SUBS_COUNT} subdomains which ${L_SUBS_COUNT} are alive${COLORS[RESET]}"
 
+}
+
+# i need to edit subZy source code it hase a problem but fuck it not in the mood for it later
+function sub_take(){
+  if [[ ! -f results/subzy_out ]]; then
+    echo "${COLORS[CYAN]}Checking for subdomain takeover vulnerabilities using subzy${COLORS[RESET]}"
+    set +m; { subzy run --targets results/alive_subs --hide_fails --verify_ssl --vuln --https --timeout 5 --output results/subzy_out & } &>/dev/null
+    duration_counter "subzy"
+    if [[ -f results/subzy_out ]]; then
+      if [[ $(jq -e '. == null' results/subzy_out) = true || $(jq -e '. == []' results/subzy_out) = true ]]; then
+        echo "${COLORS[YELLOW]}No possible subdomain takeover found by subzy${COLORS[RESET]}"
+        rm -f results/subzy_out
+      else
+        jq -r '.[].subdomain' results/subzy_out | sort -u -V > results/possible_sub_takeover
+        echo "${COLORS[RED]}Possible subdomain takeover URLs found and stored in results${COLORS[RESET]}"
+      fi
+    fi
+  else
+    echo "${COLORS[YELLOW]}Subzy results exist${COLORS[RESET]}"
+  fi
 }
 
 function headers(){
   if [[ ! -d results/fff_res ]]; then
     echo "${COLORS[CYAN]}Gathering response headers and body with fff${COLORS[RESET]}"
-    fff -d 80 -H -b -S -o results/fff_res <results/alive_subs &>/dev/null
+    cat results/alive_subs | fff -d 80 -H -b -S -o results/fff_res &>/dev/null
   else
     echo "${COLORS[YELLOW]}fff already has results stored${COLORS[RESET]}"
   fi
@@ -214,14 +254,15 @@ function wayback(){
   if [[ ! -f ./results/wayback_urls ]]; then
     echo "${COLORS[CYAN]}Gathering URLs from archive in background using waybackpy and urlfinder${COLORS[RESET]}"
 
-    set +m; { waybackpy -u "$domain" -ku -sub -h >>results/urls2 & } &>/dev/null
+    set +m; { urlfinder -list results/subs -silent -o WAYBACK_TEMP & } &>/dev/null
+    duration_counter "urlfinder"
+
+    set +m; { waybackpy -u "$domain" -ku -sub -h >> WAYBACK_TEMP & } &>/dev/null
     duration_counter "waybackpy"
 
-    set +m; { urlfinder -list results/subs -silent -o results/urls1 & } &>/dev/null
-    duration_counter "urlfinder"
     echo "${COLORS[BLUE]}Sorting the URLs${COLORS[RESET]}"
-    sort -u -V results/urls1 results/urls2 >results/wayback_urls
-    rm -f results/urls1 results/urls2
+
+    sort -u -V WAYBACK_TEMP > results/wayback_urls
 
   else
     echo "${COLORS[YELLOW]}Archive URLs already exist in results directory${COLORS[RESET]}"
@@ -249,97 +290,89 @@ function enum(){
 }
 
 
-# DNS and IP information
-echo "${COLORS[CYAN]}Checking the $domain for host IPs and DNS records${COLORS[RESET]}"
-if [[ ! -f results/dig_results ]]; then
-  dig "$domain" >results/dig_results
-  dig @8.8.8.8 +short NS "$domain" >results/ns_dns && sed -i -e 's/.$//g' results/ns_dns
-else
-  echo "${COLORS[YELLOW]}dig results already exist${COLORS[RESET]}"
-fi
+function dns_e(){
+  local dir=results/dns_results
+  echo "${COLORS[CYAN]}Checking the $domain for DNS records and gathering IPs${COLORS[RESET]}"
+  if [[ ! -d "$dir" ]]; then
+    mkdir -p "$dir"
+  else
+    echo "${COLORS[YELLOW]}dns results dir already exist: $dir ${COLORS[RESET]}"
+  fi
+  if [[ -n $(ls -A "$dir") ]]; then
+    setopt dotglob
+    files=("$dir"/*(.))
+    unsetopt dotglob
+    file_count=${#files}
+  fi
 
-if [[ ! -f results/ns_lookup_res ]]; then
-  nslookup "$domain" >results/ns_lookup_res
-else
-  echo "${COLORS[YELLOW]}nslookup results already exist${COLORS[RESET]}"
-fi
+  if [[ ! -n $(ls -A "$dir") ]] || [[ file_count -ne $(( L_SUBS_COUNT + 1 )) ]];then
+    cat results/alive_subs |  xargs -I {} zsh -c 'u="$1";d="$2"; dnsr -d "$u" -j -o "$d/""${u#*://}"' _ {} "$dir" &>/dev/null
+    dig @8.8.8.8 +short NS "$domain" > results/dns_results/ns_record && sed -i -e 's/.$//g' results/dns_results/ns_record
+    duration_counter "dig"
+  else
+    echo "${COLORS[YELLOW]}dns results already exist${COLORS[RESET]}"
+  fi
 
-if [[ ! -f hosted_on || ! -f results/ips.txt ]]; then
-  host "$domain" >hosted_on
-  grep -oP '(\d{1,3}\.){3}\d{1,3}' hosted_on >results/ips.txt && rm hosted_on
-else
-  echo "${COLORS[YELLOW]}IPs already generated${COLORS[RESET]}"
-fi
-
-# Nmap scan
+  if [[ ! -f results/hosted_on || ! -f results/ips ]]; then
+    cat results/alive_subs | xargs -I {} host "{}" > results/hosted_on
+    grep -oP '(\d{1,3}\.){3}\d{1,3}' results/hosted_on >> IPs_TEMP
+    sort -u -V IPs_TEMP > results/ips
+  else
+    echo "${COLORS[YELLOW]}IPs already generated${COLORS[RESET]}"
+  fi
+}
 
 function basic_nmap(){
   echo "${COLORS[CYAN]}Starting Nmap scan in background (1000 ports)${COLORS[RESET]}"
   if [[ ! -f results/nmap_results ]]; then
-    set +m; { nmap -A -T2 -sC -iL results/ips.txt -oN results/nmap_results & } &>/dev/null
+    set +m; { nmap -A -T2 -sC -iL results/ips -oN results/nmap_results & } &>/dev/null
   else
     echo "${COLORS[YELLOW]}Nmap results exist${COLORS[RESET]}"
   fi
 }
 
-# Whois information
-echo "${COLORS[CYAN]}Gathering whois information${COLORS[RESET]}"
-mkdir -p results/whois
-if [[ ! -d ./results/whois/domain_based && ! -d ./results/whois/ip_based ]]; then
-  mkdir -p results/whois/ip_based results/whois/domain_based
-  echo "${COLORS[BLUE]}Gathering whois information on IP addresses${COLORS[RESET]}"
-  while read -r ip; do
-    whois "$ip" >results/whois/ip_based/"$ip"
-  done <results/ips.txt
 
-  echo "${COLORS[BLUE]}Gathering whois information on domains${COLORS[RESET]}"
-  while read -r domain_name; do
-    whois -I "$domain_name" >results/whois/domain_based/"$domain_name"
-  done <results/subs
-else
-  echo "${COLORS[YELLOW]}Whois information already exists${COLORS[RESET]}"
-fi
+function who_is(){
+  echo "${COLORS[CYAN]}Gathering whois information${COLORS[RESET]}"
+  mkdir -p results/whois
+  if [[ ! -d ./results/whois/domain_based && ! -d ./results/whois/ip_based ]]; then
+    mkdir -p results/whois/ip_based results/whois/domain_based
+    echo "${COLORS[BLUE]}Gathering whois information on IP addresses${COLORS[RESET]}"
+    while read -r ip; do
+      set +m; {timeout 10 whois -Ia -H "$ip" > results/whois/ip_based/"$ip"} 2>/dev/null
+    done < results/ips
 
-# Directory brute force
-echo "${COLORS[CYAN]}Running gobuster for directory enumeration${COLORS[RESET]}"
-if [[ ! -f ./results/dirs_small ]]; then
-  set +m
-  {
-    gobuster dir -u "https://$domain" \
+    echo "${COLORS[BLUE]}Gathering whois information on domains${COLORS[RESET]}"
+    while read -r domain_name; do
+      set +m;{timeout 10 whois -Ia "$domain_name" > results/whois/domain_based/"$domain_name"} 2>/dev/null
+    done < results/subs
+  else
+    echo "${COLORS[YELLOW]}Whois information already exists${COLORS[RESET]}"
+  fi
+}
+
+
+function dir_brut(){
+  # in not deep already implemented bitches
+  echo "${COLORS[CYAN]}Running gobuster for directory enumeration${COLORS[RESET]}"
+  if [[ ! -f ./results/dirs_small ]]; then
+    set +m;{ gobuster dir -u "https://$domain" \
       -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-small.txt \
       --timeout 5s -t 50 -r -o results/dirs_small &
     } &>/dev/null
   else
     echo "${COLORS[YELLOW]}Gobuster results (small directory list) exist${COLORS[RESET]}"
-fi
+  fi
 
-if [[ ! -f ./results/dirs_lower_small ]]; then
-  set +m
-  {
-    gobuster dir -u "https://$domain" \
+  if [[ ! -f ./results/dirs_lower_small ]]; then
+    set +m;{ gobuster dir -u "https://$domain" \
       -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-small.txt \
       --timeout 5s -t 50 -r -o results/dirs_lower_small &
     } &>/dev/null
   else
     echo "${COLORS[YELLOW]}Gobuster results (lowercase small directory list) exist${COLORS[RESET]}"
-fi
-
-# Subdomain takeover check
-if [[ ! -f results/subzy_out ]]; then
-  echo "${COLORS[CYAN]}Checking for subdomain takeover vulnerabilities using subzy${COLORS[RESET]}"
-  set +m; { subzy run --targets results/alive_subs --hide_fails --verify_ssl --vuln --https --timeout 5 --output results/subzy_out & } &>/dev/null
-  duration_counter "subzy"
-  if [[ -f results/subzy_out ]]; then
-    if [[ $(jq -e '. == null' results/subzy_out) = true || $(jq -e '. == []' results/subzy_out) = true ]]; then
-      echo "${COLORS[YELLOW]}No possible subdomain takeover found by subzy${COLORS[RESET]}"
-      rm -f results/subzy_out
-    else
-      jq -r '.[].subdomain' results/subzy_out | sort -u >results/possible_sub_takeover
-      echo "${COLORS[RED]}Possible subdomain takeover URLs found and stored in results${COLORS[RESET]}"
-    fi
   fi
+  # if deep use big dict not feeling to added now maybe later
+}
 
-else
-  echo "${COLORS[YELLOW]}Subzy results exist${COLORS[RESET]}"
-fi
-
+main "${@}"

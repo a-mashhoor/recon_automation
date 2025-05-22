@@ -1,17 +1,26 @@
 #!/usr/bin/env zsh
 
+# In your _init_terminal function:
 _init_terminal() {
   stty sane
   stty -echoctl
   stty intr '^C'
   [[ -t 1 ]] || { echo "Not running in a terminal" >&2; exit 1; };
 
+  if [[ -z "$(ps -o pgid= $$)" ]]; then
+    exec setsid $SHELL -c "exec $0 $@"
+  fi
 
   export IFS=$' \t\n'
   unsetopt SINGLE_LINE_ZLE
   setopt INTERACTIVE_COMMENTS
   setopt NO_PROMPT_SP
   setopt NO_PROMPT_CR
+
+  #Create new process group
+  #set -o monitor
+  #set -o nohup
+  # ( )
 }
 
 _cleanup_terminal() {
@@ -19,8 +28,14 @@ _cleanup_terminal() {
   setopt localoptions
   unsetopt xtrace
   set +x
+  # Reset terminal settings
   stty sane 2>/dev/null
-  echo "" >&2
+  tput cnorm 2>/dev/null
+
+  # Final process cleanup
+  # kill -TERM -- -$$ 2>/dev/null
+  #echo "" >&2
+  #echo
 }
 
 trap _cleanup_terminal EXIT INT TERM
@@ -37,25 +52,21 @@ typeset -gA COLORS=(
 
 typeset -ga SPINNER=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 
-
-
 _print_status() {
   local msg="$1"
-  # Use direct terminal control sequences
   printf "\r\033[2K%s${COLORS[RESET]}" "$msg" >&2
-  # Immediately flush output
   zle && zle flush-input 2>/dev/null || true
 }
-
 
 _get_child_procs() {
   local -a procs=()
   local p cmd
   for p in ${(f)"$(ps -o pid= --ppid $$ 2>/dev/null)"}; do
+    p=${${(s: :)p}[1]}
     cmd=$(ps -o comm= -p $p 2>/dev/null) || continue
     case $cmd in
-      (zsh|sh|bash|dash|ps|grep|pgrep|awk|sed|cut|tr|*[[:space:]]*) continue ;;
-      (*) procs+=($p) ;;
+      (zsh|sh|bash|dash|ps|grep|pgrep|awk|sed|cut|systemd|tr|*[[:space:]]*) continue ;;
+      *) procs+=($p) ;;
     esac
   done
   print -l $procs
@@ -72,7 +83,6 @@ duration_counter() {
   local -a pids
   local elapsed etime formatted_elapsed
 
-  # Get all PIDs for the process name
   pids=($(pgrep -u "$USER" -f "$name"))
 
   if [[ ${#pids[@]} -eq 0 ]]; then
@@ -80,62 +90,53 @@ duration_counter() {
     return 1
   fi
 
-  # Animation characters
   local spin_idx=0
 
   while true; do
-    # Check if any processes are still running
     pids=($(pgrep -u "$USER" -f "$name"))
     [[ ${#pids[@]} -eq 0 ]] && break
 
-    # Get elapsed time for the first process
     etime=$(ps -o etime= -p ${pids[1]} 2>/dev/null | tr -d ' ')
 
-    # Calculate total elapsed time
     elapsed=$((SECONDS - start_time))
     formatted_elapsed=$(_format_time $elapsed)
 
-    # Build status message
     local msg="${COLORS[RED]}${SPINNER[$spin_idx]} ${COLORS[CYAN]}${name} ${COLORS[MAGENTA]}is running "
     msg+="${COLORS[YELLOW]}▶ ${COLORS[BLUE]}PS: ${#pids[@]} ${COLORS[YELLOW]}▶ "
     msg+="${COLORS[GREEN]}TIME: ${formatted_elapsed} (${etime})"
 
     _print_status "$msg"
 
-    # Update spinner
     spin_idx=$(((spin_idx + 1) % ${#SPINNER[@]}))
 
-    # Sleep but allow quick exit
     for i in {1..10}; do
       sleep 0.1
-      # Check if processes ended during sleep
       pids=($(pgrep -u "$USER" -f "$name"))
       [[ ${#pids[@]} -eq 0 ]] && break
     done
   done
 
-  # Final message
   elapsed=$((SECONDS - start_time))
   formatted_elapsed=$(_format_time $elapsed)
   _print_status "${COLORS[GREEN]}✓ ${COLORS[CYAN]}${name} ${COLORS[YELLOW]}completed in ${COLORS[GREEN]}${formatted_elapsed}"
-  echo  # Add newline after completion
+  echo
 }
 
 end_of_script() {
-  # Get all child processes using helper
-  local child_pids=($(_get_child_procs))
-  local background_procs=()
+
+  local -a child_pids=( ${(f)"$(_get_child_procs)"} )
+  typeset -aU background_procs=()
   local p cmd
 
-  # Get unique process names
   for p in ${child_pids[@]}; do
-    cmd=$(ps -o comm= -p $p 2>/dev/null || continue)
+    cmd=$(ps -p $p -o comm= 2>/dev/null) || continue
     background_procs+=($cmd)
   done
 
+
   if [[ ${#background_procs[@]} -gt 0 ]]; then
     echo "${COLORS[YELLOW]}The following processes are running in background:${COLORS[RESET]}"
-    echo "${COLORS[CYAN]}${(u)background_procs}${COLORS[RESET]}"
+    echo "${COLORS[CYAN]}${(j:, :)${(u)background_procs}}${COLORS[RESET]}"
     echo "${COLORS[MAGENTA]}This could take a long time (some tools like katana may take hours)${COLORS[RESET]}"
     echo "${COLORS[RED]}You can exit early with Ctrl+C but results may be incomplete${COLORS[RESET]}"
 
@@ -144,25 +145,20 @@ end_of_script() {
     local elapsed time_str
 
     while true; do
-      # Check if any background processes remain
       child_pids=($(_get_child_procs))
       [[ ${#child_pids[@]} -eq 0 ]] && break
 
-      # Calculate elapsed time
       elapsed=$((SECONDS - start))
       time_str=$(_format_time $elapsed)
 
-      # Build status message
       local msg="${COLORS[RED]}${SPINNER[$spin_idx]} ${COLORS[BLUE]}Running "
       msg+="${COLORS[GREEN]}${time_str} ${COLORS[YELLOW]}▶ "
       msg+="${COLORS[CYAN]}Waiting for completion..."
 
       _print_status "$msg"
 
-      # Update spinner
-      spin_idx=$(((spin_idx + 1) % ${#spin[@]}))
+      spin_idx=$(((spin_idx + 1) % ${#SPINNER[@]}))
 
-      # Sleep but check frequently
       for i in {1..5}; do
         sleep 0.2
         child_pids=($(_get_child_procs))
@@ -170,7 +166,6 @@ end_of_script() {
       done
     done
 
-    # Final completion message
     elapsed=$((SECONDS - start))
     time_str=$(_format_time $elapsed)
     _print_status "${COLORS[GREEN]}✓ All processes completed in ${time_str}"
@@ -181,16 +176,20 @@ end_of_script() {
   fi
 }
 
-# hiding ctrl-c
+
 stty -echoctl
-
-# trapping ctrl c
 trap ctrl_c INT
-
 ctrl_c() {
   print -P "\n%F{yellow}Exiting the program based on Ctrl + C by user execution!%f"
 
-  local child_pids=($(_get_child_procs))
+  if kill -TERM -- -$$ 2>/dev/null; then
+    sleep 0.5  # time for cleanup
+    print -P "%F{green}Closing the script%f"
+    exit 130
+  fi
+
+  # fucking fall back
+  local -a child_pids=( ${(f)"$(_get_child_procs)"} )
   if [[ ${#child_pids[@]} -eq 0 ]]; then
     print "No background processes to kill"
   else
@@ -256,23 +255,23 @@ function validate_scope_file() {
 
   local file=$1
 
-  if [[ "$file" != *.scope ]]; then
-    echo "${COLORS[RED]}Error: Scope file must have .scope extension${COLORS[RESET]}" >&2
+  if [[ "$file" != .scope ]]; then
+    echo "${COLORS[RED]}err: Scope file name must be .scope ${COLORS[RESET]}" >&2
     return 1
   fi
 
   if [[ ! -f "$file" ]]; then
-    echo "${COLORS[RED]}Error: Scope file '$file' does not exist${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: Scope file '$file' does not exist${COLORS[RESET]}" >&2
     return 1
   fi
 
   if [[ ! -r "$file" ]]; then
-    echo "${COLORS[RED]}Error: Scope file '$file' is not readable${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: Scope file '$file' is not readable${COLORS[RESET]}" >&2
     return 1
   fi
 
   if ! grep -q '[^[:space:]]' "$file" || ! grep -q . "$file" ; then
-    echo "${COLORS[RED]}Error: Scope file '$file' is empty${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: Scope file '$file' is empty${COLORS[RESET]}" >&2
     return 1
   fi
 
@@ -292,12 +291,12 @@ validate_domain() {
   local max_length=255
 
   if [[ ${#domain} -gt $max_length ]]; then
-    echo "${COLORS[RED]}Error: Domain exceeds maximum length of $max_length characters${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: Domain exceeds maximum length of $max_length characters${COLORS[RESET]}" >&2
     return 1
   fi
 
   if ! [[ "$domain" =~ '^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$' ]]; then
-    echo "${COLORS[RED]}Error: '$domain' doesn't appear to be a valid domain${COLORS[RESET]}" >&2
+    echo "${COLORS[RED]}err: '$domain' doesn't appear to be a valid domain${COLORS[RESET]}" >&2
     return 1
   fi
 
@@ -306,17 +305,17 @@ validate_domain() {
   for label in "${labels[@]}"; do
 
     if [[ ${#label} -lt 1 || ${#label} -gt 63 ]]; then
-      echo "${COLORS[RED]}Error: Domain part '$label' has invalid length (must be 1-63 characters)${COLORS[RESET]}" >&2
+      echo "${COLORS[RED]}err: Domain part '$label' has invalid length (must be 1-63 characters)${COLORS[RESET]}" >&2
       return 1
     fi
 
     if ! [[ "$label" =~ '^[a-zA-Z0-9]' ]] || ! [[ "$label" =~ '[a-zA-Z0-9]$' ]]; then
-      echo "${COLORS[RED]}Error: Domain part '$label' must start and end with a letter or digit${COLORS[RESET]}" >&2
+      echo "${COLORS[RED]}err: Domain part '$label' must start and end with a letter or digit${COLORS[RESET]}" >&2
       return 1
     fi
 
     if ! [[ "$label" =~ '^[a-zA-Z0-9-]+$' ]]; then
-      echo "${COLORS[RED]}Error: Domain part '$label' contains invalid characters${COLORS[RESET]}" >&2
+      echo "${COLORS[RED]}err: Domain part '$label' contains invalid characters${COLORS[RESET]}" >&2
       return 1
     fi
   done
@@ -353,17 +352,17 @@ check_internet() {
   return 1
 }
 
-check_ssl() {
+function check_ssl() {
   local domain=$1
   local cert_info
 
-  if ! cert_info=$(timeout 5 openssl s_client -connect "$domain:443" -servername "$domain" -showcerts 2>/dev/null | openssl x509 -noout -text 2>/dev/null); then
-    echo "${COLORS[RED]}ERROR: Failed to connect to $domain:443${COLORS[RESET]}" >&2
+  if ! cert_info=$(timeout 5s openssl s_client -connect "$domain:443" -servername "$domain" -showcerts 2>/dev/null | openssl x509 -noout -text &>/dev/null); then
+    echo "${COLORS[RED]}err: openssl Failed to connect to $domain:443${COLORS[RESET]}" >&2
     return 1
   fi
 
   if ! openssl s_client -connect "$domain:443" -servername "$domain" -quiet -verify_quiet -brief -no_ign_eof </dev/null 2>/dev/null; then
-    echo "${COLORS[YELLOW]}WARNING: SSL certificate for $domain may be invalid or self-signed${COLORS[RESET]}" >&2
+    echo "${COLORS[YELLOW]}warning: SSL certificate for $domain may be invalid or self-signed${COLORS[RESET]}" >&2
     echo "Certificate details:"
     echo "$cert_info" | grep -E 'Issuer:|Subject:|Not Before:|Not After :|DNS:'
 
@@ -372,4 +371,12 @@ check_ssl() {
   fi
   echo "${COLORS[GREEN]}Valid SSL certificate found for $domain${COLORS[RESET]}"
   return 0
+}
+
+function l_counter() {
+  local _file="$1"
+  local t_file=("${(@f)$(<$_file)}")
+  t_file=(${t_file:#[[:blank:]]#})
+  local lines_count=${#t_file}
+  print -l $lines_count
 }
