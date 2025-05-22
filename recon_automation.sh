@@ -5,13 +5,13 @@
 # Author Arshia Mashhoor (l0uiew)
 # github https://github.com/a-mashhoor/recon_automation.git
 
-# Comments? one or two not in the mood for them for my freaking personal automation script
-# use it as it is or leave not, not my problem I'm not your god damn babysiter ! by the way
-# don't be an ahole use this shit responsivly on the freaking scope where the hell you are allowed
-# to do enum or fuzzing  etcetra etcetra
+# Comments? Maybe one or two, I'm not in the mood to write any for my freaking personal automation script,
+# use it as it is or not, not my problem, I'm not your goddamn babysitter!
+# By the way, don't be an asshole use this shit responsively on the freaking scope where the hell you are allowed
+# to do enum or fuzzing, etcetera, etcetera...
 #
 #
-#
+
 
 emulate -LR zsh
 setopt extendedglob
@@ -19,7 +19,9 @@ unsetopt CASE_MATCH
 set +x
 unsetopt xtrace
 
-source ./funcs.sh
+#SCRIPT_DIR=$(cd "$(dirname "$(%):-%x")" >/dev/null 2>&1 && pwd -P)
+SCRIPT_DIR=${0:A:h}
+source "${SCRIPT_DIR}/funcs.sh"
 
 
 SUBS_TEMP=$(mktemp -p /tmp )
@@ -44,7 +46,7 @@ function main(){
 
   waf_det
   sub_g
-  #sub_take subzy problem (i'll replace it with my own tool soon enough)
+  #sub_take (i'll replace it with my own tool soon enough)
   headers
   wayback
   crawling
@@ -220,7 +222,7 @@ function sub_g(){
 
 }
 
-# i need to edit subZy source code it hase a problem but fuck it not in the mood for it later
+# i need to edit subZy's source code it have a problem, but fuck it not in the mood to do so!
 function sub_take(){
   if [[ ! -f results/subzy_out ]]; then
     echo "${COLORS[CYAN]}Checking for subdomain takeover vulnerabilities using subzy${COLORS[RESET]}"
@@ -353,7 +355,7 @@ function who_is(){
 
 
 function dir_brut(){
-  # in not deep already implemented bitches
+  # deep=false already working bitches
   echo "${COLORS[CYAN]}Running gobuster for directory enumeration${COLORS[RESET]}"
   if [[ ! -f ./results/dirs_small ]]; then
     set +m;{ gobuster dir -u "https://$domain" \
@@ -372,7 +374,7 @@ function dir_brut(){
   else
     echo "${COLORS[YELLOW]}Gobuster results (lowercase small directory list) exist${COLORS[RESET]}"
   fi
-  # if deep use big dict not feeling to added now maybe later
+  # if deep=true use big dict, not feeling to add this logic now maybe later
 }
 
 main "${@}"
