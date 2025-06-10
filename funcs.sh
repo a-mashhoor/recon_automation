@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-# In your _init_terminal function:
+#  my _init_terminal function
 _init_terminal() {
   stty sane
   stty -echoctl
